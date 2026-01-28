@@ -331,7 +331,6 @@ HTML_PAGE = """
             if (!analysisData || !analysisData.stutter_events[index]) return;
             stutterIndex = index;
             video.currentTime = analysisData.stutter_events[index].timestamp;
-            video.play();
         }
 
         document.getElementById('prevStutter').onclick = () => {
