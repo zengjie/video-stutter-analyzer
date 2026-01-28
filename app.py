@@ -165,7 +165,8 @@ HTML_PAGE = """
             background: #1a1a2e;
             padding: 8px 12px;
             border-radius: 6px;
-            min-width: 180px;
+            width: 220px;
+            text-align: center;
         }
     </style>
 </head>
