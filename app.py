@@ -188,7 +188,7 @@ HTML_PAGE = """
             margin: 20px 0;
         }
         .video-container.stutter video { outline: 4px solid #ff4444; }
-        video { width: 100%; display: block; }
+        video { width: 100%; max-height: 60vh; object-fit: contain; display: block; }
         .timeline {
             height: 32px;
             background: #222;
