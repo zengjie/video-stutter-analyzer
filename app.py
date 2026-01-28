@@ -146,7 +146,7 @@ HTML_PAGE = """
         * { box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 900px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
             background: #1a1a2e;
@@ -180,6 +180,9 @@ HTML_PAGE = """
         .btn:disabled { background: #555; cursor: not-allowed; }
         .btn-sm { padding: 8px 16px; font-size: 14px; }
         #result { display: none; }
+        .result-layout { display: flex; gap: 20px; align-items: flex-start; }
+        .result-sidebar { width: 280px; flex-shrink: 0; }
+        .result-main { flex: 1; min-width: 0; position: sticky; top: 20px; }
         .video-container {
             position: relative;
             background: #000;
@@ -249,20 +252,20 @@ HTML_PAGE = """
             background: #16213e;
             border-radius: 12px;
             padding: 15px;
-            margin: 20px 0;
-            max-height: 200px;
-            overflow-y: auto;
         }
+        .stutters-list h3 { margin: 0 0 10px 0; font-size: 14px; color: #888; }
         .stutter-item {
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
             padding: 8px 12px;
             margin: 4px 0;
             background: #1a1a2e;
             border-radius: 6px;
             cursor: pointer;
             border-left: 3px solid #ff4444;
+            font-size: 13px;
         }
+        .stutter-item span:last-child { color: #888; font-size: 12px; }
         .stutter-item:hover { background: #252550; }
         .loading { display: none; text-align: center; padding: 40px; }
         .spinner {
@@ -302,35 +305,40 @@ HTML_PAGE = """
     </div>
 
     <div id="result">
-        <div class="video-container" id="videoContainer">
-            <video id="video" controls></video>
-            <div class="stutter-label" id="stutterLabel">卡顿</div>
-            <div class="timeline" id="timeline">
-                <div class="timeline-progress" id="timelineProgress"></div>
+        <div class="result-layout">
+            <div class="result-sidebar">
+                <div class="stutters-list" id="stuttersList"></div>
+            </div>
+            <div class="result-main">
+                <div class="video-container" id="videoContainer">
+                    <video id="video" controls></video>
+                    <div class="stutter-label" id="stutterLabel">卡顿</div>
+                    <div class="timeline" id="timeline">
+                        <div class="timeline-progress" id="timelineProgress"></div>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button class="btn btn-sm" id="prevFrame" title="上一帧 (,)">&lt; 帧</button>
+                    <button class="btn btn-sm" id="nextFrame" title="下一帧 (.)">帧 &gt;</button>
+                    <span class="frame-info" id="frameInfo">帧: --</span>
+                    <div style="border-left: 1px solid #444; height: 24px; margin: 0 10px;"></div>
+                    <button class="btn btn-sm" id="prevStutter">上一个卡顿</button>
+                    <button class="btn btn-sm" id="nextStutter">下一个卡顿</button>
+                    <button class="btn btn-sm" onclick="location.reload()">重新上传</button>
+                </div>
+
+                <div class="score-bar">
+                    <div class="score" id="scoreValue">--</div>
+                    <div class="score-details">
+                        <div class="score-item"><div class="score-item-value" id="avgFps">--</div><div class="score-item-label">平均帧率</div></div>
+                        <div class="score-item"><div class="score-item-value" id="lowFps">--</div><div class="score-item-label">1% 最低</div></div>
+                        <div class="score-item"><div class="score-item-value" id="dupFrames">--</div><div class="score-item-label">重复帧</div></div>
+                        <div class="score-item"><div class="score-item-value" id="stutterCount">--</div><div class="score-item-label">卡顿数</div></div>
+                    </div>
+                </div>
             </div>
         </div>
-
-        <div class="controls">
-            <button class="btn btn-sm" id="prevFrame" title="上一帧 (,)">&lt; 帧</button>
-            <button class="btn btn-sm" id="nextFrame" title="下一帧 (.)">帧 &gt;</button>
-            <span class="frame-info" id="frameInfo">帧: --</span>
-            <div style="border-left: 1px solid #444; height: 24px; margin: 0 10px;"></div>
-            <button class="btn btn-sm" id="prevStutter">上一个卡顿</button>
-            <button class="btn btn-sm" id="nextStutter">下一个卡顿</button>
-            <button class="btn btn-sm" onclick="location.reload()">重新上传</button>
-        </div>
-
-        <div class="score-bar">
-            <div class="score" id="scoreValue">--</div>
-            <div class="score-details">
-                <div class="score-item"><div class="score-item-value" id="avgFps">--</div><div class="score-item-label">平均帧率</div></div>
-                <div class="score-item"><div class="score-item-value" id="lowFps">--</div><div class="score-item-label">1% 最低</div></div>
-                <div class="score-item"><div class="score-item-value" id="dupFrames">--</div><div class="score-item-label">重复帧</div></div>
-                <div class="score-item"><div class="score-item-value" id="stutterCount">--</div><div class="score-item-label">卡顿数</div></div>
-            </div>
-        </div>
-
-        <div class="stutters-list" id="stuttersList"></div>
     </div>
 
     <script>
@@ -431,9 +439,9 @@ HTML_PAGE = """
             // Stutter list
             const listEl = document.getElementById('stuttersList');
             if (data.stutter_events.length === 0) {
-                listEl.innerHTML = '<p style="text-align:center;color:#888;">未检测到卡顿！</p>';
+                listEl.innerHTML = '<h3>卡顿列表</h3><p style="text-align:center;color:#888;padding:20px 0;">未检测到卡顿！</p>';
             } else {
-                listEl.innerHTML = data.stutter_events.map((s, i) =>
+                listEl.innerHTML = `<h3>卡顿列表 (${data.stutter_events.length})</h3>` + data.stutter_events.map((s, i) =>
                     `<div class="stutter-item" onclick="jumpToStutter(${i})">
                         <span>#${i+1} @ ${s.timestamp.toFixed(2)}s</span>
                         <span>${s.frametime_ms.toFixed(0)}ms (${s.duplicate_count} 重复)</span>
