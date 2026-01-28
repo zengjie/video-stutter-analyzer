@@ -159,10 +159,14 @@ HTML_PAGE = """
             margin: 0 auto 20px;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .controls { display: flex; gap: 10px; margin: 15px 0; align-items: center; }
-        .legend { display: flex; gap: 15px; font-size: 13px; color: #888; margin-left: auto; }
-        .legend-item { display: flex; align-items: center; gap: 5px; }
-        .legend-color { width: 12px; height: 12px; border-radius: 2px; }
+        .controls { display: flex; gap: 10px; margin: 15px 0; align-items: center; flex-wrap: wrap; }
+        .frame-info {
+            font-family: monospace;
+            background: #1a1a2e;
+            padding: 8px 12px;
+            border-radius: 6px;
+            min-width: 180px;
+        }
     </style>
 </head>
 <body>
@@ -190,13 +194,13 @@ HTML_PAGE = """
         </div>
 
         <div class="controls">
+            <button class="btn btn-sm" id="prevFrame" title="Previous Frame (,)">&lt; Frame</button>
+            <button class="btn btn-sm" id="nextFrame" title="Next Frame (.)">Frame &gt;</button>
+            <span class="frame-info" id="frameInfo">Frame: --</span>
+            <div style="border-left: 1px solid #444; height: 24px; margin: 0 10px;"></div>
             <button class="btn btn-sm" id="prevStutter">Prev Stutter</button>
             <button class="btn btn-sm" id="nextStutter">Next Stutter</button>
-            <button class="btn btn-sm" onclick="location.reload()">New Video</button>
-            <div class="legend">
-                <div class="legend-item"><div class="legend-color" style="background:#ff4444"></div> Stutter</div>
-                <div class="legend-item"><div class="legend-color" style="background:#00d9ff"></div> Playback</div>
-            </div>
+            <button class="btn btn-sm" onclick="location.reload()">New</button>
         </div>
 
         <div class="score-bar">
@@ -341,6 +345,44 @@ HTML_PAGE = """
             stutterIndex = stutterIndex >= analysisData.stutter_events.length - 1 ? 0 : stutterIndex + 1;
             jumpToStutter(stutterIndex);
         };
+
+        // Frame stepping
+        function getFrameDuration() {
+            return analysisData ? 1 / analysisData.fps : 1/30;
+        }
+
+        function stepFrame(delta) {
+            video.pause();
+            video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + delta * getFrameDuration()));
+        }
+
+        function updateFrameInfo() {
+            if (!analysisData) return;
+            const frame = Math.round(video.currentTime * analysisData.fps);
+            const time = video.currentTime.toFixed(3);
+            const inStutter = analysisData.stutter_events.find(s =>
+                video.currentTime >= s.timestamp - 0.01 && video.currentTime <= s.timestamp + s.duplicate_count / analysisData.fps + 0.01
+            );
+            document.getElementById('frameInfo').innerHTML = inStutter
+                ? `<span style="color:#ff4444">Frame: ${frame} | ${time}s | STUTTER</span>`
+                : `Frame: ${frame} | ${time}s`;
+        }
+
+        video.addEventListener('timeupdate', updateFrameInfo);
+        video.addEventListener('seeked', updateFrameInfo);
+
+        document.getElementById('prevFrame').onclick = () => stepFrame(-1);
+        document.getElementById('nextFrame').onclick = () => stepFrame(1);
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT') return;
+            if (e.key === ',') { stepFrame(-1); e.preventDefault(); }
+            if (e.key === '.') { stepFrame(1); e.preventDefault(); }
+            if (e.key === '[') { document.getElementById('prevStutter').click(); e.preventDefault(); }
+            if (e.key === ']') { document.getElementById('nextStutter').click(); e.preventDefault(); }
+            if (e.key === ' ') { video.paused ? video.play() : video.pause(); e.preventDefault(); }
+        });
     </script>
 </body>
 </html>
