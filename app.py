@@ -2,11 +2,12 @@
 
 import tempfile
 import os
+import uuid
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 
 from main import analyze_frametimes, to_json
 
@@ -14,6 +15,9 @@ app = FastAPI(
     title="Video Stutter Analyzer",
     description="Analyze frame times and detect stutters in game recordings",
 )
+
+# Store uploaded videos temporarily
+VIDEO_CACHE = {}  # video_id -> file_path
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -26,13 +30,13 @@ HTML_PAGE = """
         * { box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 800px;
+            max-width: 900px;
             margin: 0 auto;
             padding: 20px;
             background: #1a1a2e;
             color: #eee;
         }
-        h1 { color: #00d9ff; }
+        h1 { color: #00d9ff; margin-bottom: 10px; }
         .upload-area {
             border: 2px dashed #444;
             border-radius: 12px;
@@ -58,30 +62,92 @@ HTML_PAGE = """
         }
         .btn:hover { background: #00b8d9; }
         .btn:disabled { background: #555; cursor: not-allowed; }
-        #result {
-            background: #16213e;
+        .btn-sm { padding: 8px 16px; font-size: 14px; }
+        #result { display: none; }
+        .video-container {
+            position: relative;
+            background: #000;
             border-radius: 12px;
-            padding: 20px;
-            margin-top: 20px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        .video-container.stutter video { outline: 4px solid #ff4444; }
+        video { width: 100%; display: block; }
+        .timeline {
+            height: 32px;
+            background: #222;
+            position: relative;
+            cursor: pointer;
+        }
+        .timeline-progress {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            background: rgba(0, 217, 255, 0.3);
+            pointer-events: none;
+        }
+        .timeline-marker {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            background: #ff4444;
+            opacity: 0.8;
+            min-width: 3px;
+        }
+        .timeline-marker:hover { opacity: 1; }
+        .stutter-label {
+            position: absolute;
+            top: 8px;
+            right: 10px;
+            background: #ff4444;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-weight: bold;
             display: none;
         }
-        .score {
-            font-size: 48px;
-            font-weight: bold;
-            text-align: center;
+        .video-container.stutter .stutter-label { display: block; }
+        .score-bar {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            background: #16213e;
+            padding: 15px 20px;
+            border-radius: 12px;
             margin: 20px 0;
+        }
+        .score {
+            font-size: 36px;
+            font-weight: bold;
+            min-width: 120px;
         }
         .score.good { color: #00ff88; }
         .score.fair { color: #ffaa00; }
         .score.poor { color: #ff4444; }
-        .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-        .stat-card {
-            background: #1a1a2e;
+        .score-details { flex: 1; display: flex; gap: 20px; flex-wrap: wrap; }
+        .score-item { text-align: center; }
+        .score-item-value { font-size: 20px; font-weight: bold; }
+        .score-item-label { font-size: 12px; color: #888; }
+        .stutters-list {
+            background: #16213e;
+            border-radius: 12px;
             padding: 15px;
-            border-radius: 8px;
+            margin: 20px 0;
+            max-height: 200px;
+            overflow-y: auto;
         }
-        .stat-label { color: #888; font-size: 14px; }
-        .stat-value { font-size: 24px; font-weight: bold; margin-top: 5px; }
+        .stutter-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 12px;
+            margin: 4px 0;
+            background: #1a1a2e;
+            border-radius: 6px;
+            cursor: pointer;
+            border-left: 3px solid #ff4444;
+        }
+        .stutter-item:hover { background: #252550; }
         .loading { display: none; text-align: center; padding: 40px; }
         .spinner {
             border: 4px solid #333;
@@ -93,38 +159,72 @@ HTML_PAGE = """
             margin: 0 auto 20px;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .stutters { margin-top: 20px; }
-        .stutter-item {
-            background: #1a1a2e;
-            padding: 10px 15px;
-            border-radius: 6px;
-            margin: 8px 0;
-            border-left: 3px solid #ff4444;
-        }
+        .controls { display: flex; gap: 10px; margin: 15px 0; align-items: center; }
+        .legend { display: flex; gap: 15px; font-size: 13px; color: #888; margin-left: auto; }
+        .legend-item { display: flex; align-items: center; gap: 5px; }
+        .legend-color { width: 12px; height: 12px; border-radius: 2px; }
     </style>
 </head>
 <body>
     <h1>Video Stutter Analyzer</h1>
-    <p>Upload a game recording to analyze frame times and detect stutters.</p>
+    <p>Upload a game recording to detect frame stutters.</p>
 
     <div class="upload-area" id="dropZone">
-        <p>Drag & drop video file here, or</p>
+        <p>Drag & drop video here, or</p>
         <input type="file" id="fileInput" accept="video/*">
         <button class="btn" onclick="document.getElementById('fileInput').click()">Select File</button>
     </div>
 
     <div class="loading" id="loading">
         <div class="spinner"></div>
-        <p>Analyzing video... This may take a while for large files.</p>
+        <p>Analyzing video frames...</p>
     </div>
 
-    <div id="result"></div>
+    <div id="result">
+        <div class="video-container" id="videoContainer">
+            <video id="video" controls></video>
+            <div class="stutter-label" id="stutterLabel">STUTTER</div>
+            <div class="timeline" id="timeline">
+                <div class="timeline-progress" id="timelineProgress"></div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button class="btn btn-sm" id="prevStutter">Prev Stutter</button>
+            <button class="btn btn-sm" id="nextStutter">Next Stutter</button>
+            <button class="btn btn-sm" onclick="location.reload()">New Video</button>
+            <div class="legend">
+                <div class="legend-item"><div class="legend-color" style="background:#ff4444"></div> Stutter</div>
+                <div class="legend-item"><div class="legend-color" style="background:#00d9ff"></div> Playback</div>
+            </div>
+        </div>
+
+        <div class="score-bar">
+            <div class="score" id="scoreValue">--</div>
+            <div class="score-details">
+                <div class="score-item"><div class="score-item-value" id="avgFps">--</div><div class="score-item-label">Avg FPS</div></div>
+                <div class="score-item"><div class="score-item-value" id="lowFps">--</div><div class="score-item-label">1% Low</div></div>
+                <div class="score-item"><div class="score-item-value" id="dupFrames">--</div><div class="score-item-label">Dup Frames</div></div>
+                <div class="score-item"><div class="score-item-value" id="stutterCount">--</div><div class="score-item-label">Stutters</div></div>
+            </div>
+        </div>
+
+        <div class="stutters-list" id="stuttersList"></div>
+    </div>
 
     <script>
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
         const loading = document.getElementById('loading');
         const result = document.getElementById('result');
+        const video = document.getElementById('video');
+        const videoContainer = document.getElementById('videoContainer');
+        const timeline = document.getElementById('timeline');
+        const timelineProgress = document.getElementById('timelineProgress');
+        const stutterLabel = document.getElementById('stutterLabel');
+
+        let analysisData = null;
+        let stutterIndex = -1;
 
         ['dragenter', 'dragover'].forEach(e => {
             dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('dragover'); });
@@ -147,6 +247,7 @@ HTML_PAGE = """
                 const resp = await fetch('/analyze', { method: 'POST', body: formData });
                 const data = await resp.json();
                 if (!resp.ok) throw new Error(data.detail || 'Analysis failed');
+                analysisData = data;
                 showResult(data);
             } catch (err) {
                 alert('Error: ' + err.message);
@@ -157,48 +258,89 @@ HTML_PAGE = """
         }
 
         function showResult(data) {
-            const score = data.smoothness_score;
-            const scoreClass = score >= 80 ? 'good' : score >= 50 ? 'fair' : 'poor';
-            const avgFps = (1000 / data.frame_times_ms.average).toFixed(1);
-            const lowFps = (1000 / data.frame_times_ms.one_percent_low).toFixed(1);
+            // Set video source
+            video.src = `/video/${data.video_id}`;
 
-            let stutterHtml = '';
-            if (data.stutter_events.length > 0) {
-                stutterHtml = '<div class="stutters"><h3>Stutter Events</h3>';
-                data.stutter_events.slice(0, 10).forEach(s => {
-                    stutterHtml += `<div class="stutter-item">@ ${s.timestamp.toFixed(2)}s - ${s.frametime_ms.toFixed(0)}ms (${s.duplicate_count} dup)</div>`;
+            // Update score
+            const score = data.smoothness_score;
+            const scoreEl = document.getElementById('scoreValue');
+            scoreEl.textContent = score.toFixed(1);
+            scoreEl.className = 'score ' + (score >= 80 ? 'good' : score >= 50 ? 'fair' : 'poor');
+
+            // Update stats
+            document.getElementById('avgFps').textContent = (1000 / data.frame_times_ms.average).toFixed(1);
+            document.getElementById('lowFps').textContent = (1000 / data.frame_times_ms.one_percent_low).toFixed(1);
+            document.getElementById('dupFrames').textContent = data.duplicate_detection.duplicate_frames;
+            document.getElementById('stutterCount').textContent = data.stutter_events.length;
+
+            // Add stutter markers to timeline
+            video.addEventListener('loadedmetadata', () => {
+                const duration = video.duration;
+                data.stutter_events.forEach((s, i) => {
+                    const marker = document.createElement('div');
+                    marker.className = 'timeline-marker';
+                    marker.style.left = (s.timestamp / duration * 100) + '%';
+                    marker.style.width = Math.max(3, s.duplicate_count * 2) + 'px';
+                    marker.title = `@ ${s.timestamp.toFixed(2)}s - ${s.frametime_ms.toFixed(0)}ms`;
+                    marker.onclick = (e) => { e.stopPropagation(); video.currentTime = s.timestamp; };
+                    timeline.appendChild(marker);
                 });
-                if (data.stutter_events.length > 10) stutterHtml += `<p>...and ${data.stutter_events.length - 10} more</p>`;
-                stutterHtml += '</div>';
+            });
+
+            // Update progress bar
+            video.addEventListener('timeupdate', () => {
+                const pct = (video.currentTime / video.duration) * 100;
+                timelineProgress.style.width = pct + '%';
+
+                // Check if in stutter zone
+                const inStutter = data.stutter_events.some(s =>
+                    video.currentTime >= s.timestamp && video.currentTime <= s.timestamp + s.duplicate_count / data.fps
+                );
+                videoContainer.classList.toggle('stutter', inStutter);
+                stutterLabel.textContent = inStutter ? 'STUTTER' : '';
+            });
+
+            // Timeline click to seek
+            timeline.addEventListener('click', (e) => {
+                const rect = timeline.getBoundingClientRect();
+                const pct = (e.clientX - rect.left) / rect.width;
+                video.currentTime = pct * video.duration;
+            });
+
+            // Stutter list
+            const listEl = document.getElementById('stuttersList');
+            if (data.stutter_events.length === 0) {
+                listEl.innerHTML = '<p style="text-align:center;color:#888;">No stutters detected!</p>';
+            } else {
+                listEl.innerHTML = data.stutter_events.map((s, i) =>
+                    `<div class="stutter-item" onclick="jumpToStutter(${i})">
+                        <span>#${i+1} @ ${s.timestamp.toFixed(2)}s</span>
+                        <span>${s.frametime_ms.toFixed(0)}ms (${s.duplicate_count} dup)</span>
+                    </div>`
+                ).join('');
             }
 
-            result.innerHTML = `
-                <div class="score ${scoreClass}">${score.toFixed(1)}/100</div>
-                <div class="stats">
-                    <div class="stat-card">
-                        <div class="stat-label">Average FPS</div>
-                        <div class="stat-value">${avgFps}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">1% Low FPS</div>
-                        <div class="stat-value">${lowFps}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Duplicate Frames</div>
-                        <div class="stat-value">${data.duplicate_detection.duplicate_frames} (${(data.duplicate_detection.duplicate_ratio * 100).toFixed(1)}%)</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Stutters Detected</div>
-                        <div class="stat-value">${data.stutter_events.length}</div>
-                    </div>
-                </div>
-                ${stutterHtml}
-                <p style="margin-top:20px;text-align:center;">
-                    <button class="btn" onclick="location.reload()">Analyze Another</button>
-                </p>
-            `;
             result.style.display = 'block';
         }
+
+        function jumpToStutter(index) {
+            if (!analysisData || !analysisData.stutter_events[index]) return;
+            stutterIndex = index;
+            video.currentTime = analysisData.stutter_events[index].timestamp;
+            video.play();
+        }
+
+        document.getElementById('prevStutter').onclick = () => {
+            if (!analysisData || analysisData.stutter_events.length === 0) return;
+            stutterIndex = stutterIndex <= 0 ? analysisData.stutter_events.length - 1 : stutterIndex - 1;
+            jumpToStutter(stutterIndex);
+        };
+
+        document.getElementById('nextStutter').onclick = () => {
+            if (!analysisData || analysisData.stutter_events.length === 0) return;
+            stutterIndex = stutterIndex >= analysisData.stutter_events.length - 1 ? 0 : stutterIndex + 1;
+            jumpToStutter(stutterIndex);
+        };
     </script>
 </body>
 </html>
@@ -237,18 +379,32 @@ async def analyze_upload(file: UploadFile = File(...)):
     if suffix.lower() not in [".mp4", ".mov", ".avi", ".mkv", ".webm"]:
         raise HTTPException(400, f"Unsupported format: {suffix}")
 
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(await file.read())
-        tmp_path = tmp.name
+    # Save video with unique ID
+    video_id = str(uuid.uuid4())[:8]
+    tmp_path = f"/tmp/video_{video_id}{suffix}"
+
+    with open(tmp_path, "wb") as f:
+        f.write(await file.read())
+
+    VIDEO_CACHE[video_id] = tmp_path
 
     try:
         stats, stutters = analyze_frametimes(tmp_path)
         result = to_json(stats, stutters, file.filename)
+        result["video_id"] = video_id
         return JSONResponse(result)
     except RuntimeError as e:
-        raise HTTPException(500, str(e))
-    finally:
         os.unlink(tmp_path)
+        VIDEO_CACHE.pop(video_id, None)
+        raise HTTPException(500, str(e))
+
+
+@app.get("/video/{video_id}")
+async def get_video(video_id: str):
+    """Serve uploaded video for playback."""
+    if video_id not in VIDEO_CACHE:
+        raise HTTPException(404, "Video not found")
+    return FileResponse(VIDEO_CACHE[video_id], media_type="video/mp4")
 
 
 @app.post("/analyze-url")
