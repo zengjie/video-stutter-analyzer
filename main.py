@@ -289,7 +289,7 @@ def to_json(stats: FrameTimeStats, stutters: list[StutterEvent], video_path: str
         "stutter_events": [
             {"timestamp": round(s.timestamp, 3), "frametime_ms": round(s.frametime_ms, 2),
              "duplicate_count": s.duplicate_count, "motion_before": round(s.motion_before, 2)}
-            for s in stutters[:50]
+            for s in stutters
         ],
     }
 
