@@ -141,7 +141,7 @@ HTML_PAGE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Stutter Analyzer</title>
+    <title>视频卡顿分析器</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -287,46 +287,46 @@ HTML_PAGE = """
     </style>
 </head>
 <body>
-    <h1>Video Stutter Analyzer</h1>
-    <p>Upload a game recording to detect frame stutters.</p>
+    <h1>视频卡顿分析器</h1>
+    <p>上传游戏录像，检测画面卡顿</p>
 
     <div class="upload-area" id="dropZone">
-        <p>Drag & drop video here, or</p>
+        <p>拖放视频到这里，或</p>
         <input type="file" id="fileInput" accept="video/*">
-        <button class="btn" onclick="document.getElementById('fileInput').click()">Select File</button>
+        <button class="btn" onclick="document.getElementById('fileInput').click()">选择文件</button>
     </div>
 
     <div class="loading" id="loading">
         <div class="spinner"></div>
-        <p>Analyzing video frames...</p>
+        <p>正在分析视频帧...</p>
     </div>
 
     <div id="result">
         <div class="video-container" id="videoContainer">
             <video id="video" controls></video>
-            <div class="stutter-label" id="stutterLabel">STUTTER</div>
+            <div class="stutter-label" id="stutterLabel">卡顿</div>
             <div class="timeline" id="timeline">
                 <div class="timeline-progress" id="timelineProgress"></div>
             </div>
         </div>
 
         <div class="controls">
-            <button class="btn btn-sm" id="prevFrame" title="Previous Frame (,)">&lt; Frame</button>
-            <button class="btn btn-sm" id="nextFrame" title="Next Frame (.)">Frame &gt;</button>
-            <span class="frame-info" id="frameInfo">Frame: --</span>
+            <button class="btn btn-sm" id="prevFrame" title="上一帧 (,)">&lt; 帧</button>
+            <button class="btn btn-sm" id="nextFrame" title="下一帧 (.)">帧 &gt;</button>
+            <span class="frame-info" id="frameInfo">帧: --</span>
             <div style="border-left: 1px solid #444; height: 24px; margin: 0 10px;"></div>
-            <button class="btn btn-sm" id="prevStutter">Prev Stutter</button>
-            <button class="btn btn-sm" id="nextStutter">Next Stutter</button>
-            <button class="btn btn-sm" onclick="location.reload()">New</button>
+            <button class="btn btn-sm" id="prevStutter">上一个卡顿</button>
+            <button class="btn btn-sm" id="nextStutter">下一个卡顿</button>
+            <button class="btn btn-sm" onclick="location.reload()">重新上传</button>
         </div>
 
         <div class="score-bar">
             <div class="score" id="scoreValue">--</div>
             <div class="score-details">
-                <div class="score-item"><div class="score-item-value" id="avgFps">--</div><div class="score-item-label">Avg FPS</div></div>
-                <div class="score-item"><div class="score-item-value" id="lowFps">--</div><div class="score-item-label">1% Low</div></div>
-                <div class="score-item"><div class="score-item-value" id="dupFrames">--</div><div class="score-item-label">Dup Frames</div></div>
-                <div class="score-item"><div class="score-item-value" id="stutterCount">--</div><div class="score-item-label">Stutters</div></div>
+                <div class="score-item"><div class="score-item-value" id="avgFps">--</div><div class="score-item-label">平均帧率</div></div>
+                <div class="score-item"><div class="score-item-value" id="lowFps">--</div><div class="score-item-label">1% 最低</div></div>
+                <div class="score-item"><div class="score-item-value" id="dupFrames">--</div><div class="score-item-label">重复帧</div></div>
+                <div class="score-item"><div class="score-item-value" id="stutterCount">--</div><div class="score-item-label">卡顿数</div></div>
             </div>
         </div>
 
@@ -367,11 +367,11 @@ HTML_PAGE = """
             try {
                 const resp = await fetch('/analyze', { method: 'POST', body: formData });
                 const data = await resp.json();
-                if (!resp.ok) throw new Error(data.detail || 'Analysis failed');
+                if (!resp.ok) throw new Error(data.detail || '分析失败');
                 analysisData = data;
                 showResult(data);
             } catch (err) {
-                alert('Error: ' + err.message);
+                alert('错误: ' + err.message);
                 dropZone.style.display = 'block';
             } finally {
                 loading.style.display = 'none';
@@ -431,12 +431,12 @@ HTML_PAGE = """
             // Stutter list
             const listEl = document.getElementById('stuttersList');
             if (data.stutter_events.length === 0) {
-                listEl.innerHTML = '<p style="text-align:center;color:#888;">No stutters detected!</p>';
+                listEl.innerHTML = '<p style="text-align:center;color:#888;">未检测到卡顿！</p>';
             } else {
                 listEl.innerHTML = data.stutter_events.map((s, i) =>
                     `<div class="stutter-item" onclick="jumpToStutter(${i})">
                         <span>#${i+1} @ ${s.timestamp.toFixed(2)}s</span>
-                        <span>${s.frametime_ms.toFixed(0)}ms (${s.duplicate_count} dup)</span>
+                        <span>${s.frametime_ms.toFixed(0)}ms (${s.duplicate_count} 重复)</span>
                     </div>`
                 ).join('');
             }
@@ -480,8 +480,8 @@ HTML_PAGE = """
                 video.currentTime >= s.timestamp - 0.01 && video.currentTime <= s.timestamp + s.duplicate_count / analysisData.fps + 0.01
             );
             document.getElementById('frameInfo').innerHTML = inStutter
-                ? `<span style="color:#ff4444">Frame: ${frame} | ${time}s | STUTTER</span>`
-                : `Frame: ${frame} | ${time}s`;
+                ? `<span style="color:#ff4444">帧: ${frame} | ${time}s | 卡顿</span>`
+                : `帧: ${frame} | ${time}s`;
         }
 
         video.addEventListener('timeupdate', updateFrameInfo);
