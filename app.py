@@ -180,9 +180,9 @@ HTML_PAGE = """
         .btn:disabled { background: #555; cursor: not-allowed; }
         .btn-sm { padding: 8px 16px; font-size: 14px; }
         #result { display: none; }
-        .result-layout { display: flex; gap: 20px; align-items: flex-start; }
-        .result-sidebar { width: 280px; flex-shrink: 0; }
-        .result-main { flex: 1; min-width: 0; position: sticky; top: 20px; }
+        .result-layout { display: flex; gap: 20px; height: calc(100vh - 120px); }
+        .result-sidebar { width: 280px; flex-shrink: 0; overflow-y: auto; }
+        .result-main { flex: 1; min-width: 0; overflow-y: auto; }
         .video-container {
             position: relative;
             background: #000;
