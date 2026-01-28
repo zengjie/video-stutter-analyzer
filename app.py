@@ -4,12 +4,47 @@ import tempfile
 import os
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from itsdangerous import URLSafeSerializer
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, RedirectResponse
 
 from main import analyze_frametimes, to_json
+
+# Feishu OAuth configuration
+FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID", "")
+FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "")
+SESSION_SECRET = os.environ.get("SESSION_SECRET", "dev-secret-change-me")
+REDIRECT_URI = os.environ.get("REDIRECT_URI", "")
+
+serializer = URLSafeSerializer(SESSION_SECRET)
+
+
+def get_session(request: Request) -> dict | None:
+    """Get session from cookie."""
+    token = request.cookies.get("session")
+    if not token:
+        return None
+    try:
+        return serializer.loads(token)
+    except Exception:
+        return None
+
+
+def set_session(response: RedirectResponse, data: dict):
+    """Set session cookie."""
+    token = serializer.dumps(data)
+    response.set_cookie("session", token, httponly=True, max_age=86400 * 7)
+
+
+async def require_auth(request: Request):
+    """Check if user is authenticated."""
+    session = get_session(request)
+    if not session or "user_id" not in session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return session
 
 app = FastAPI(
     title="Video Stutter Analyzer",
@@ -18,6 +53,87 @@ app = FastAPI(
 
 # Store uploaded videos temporarily
 VIDEO_CACHE = {}  # video_id -> file_path
+
+
+# Feishu OAuth routes
+@app.get("/login")
+def login():
+    """Redirect to Feishu authorization page."""
+    if not FEISHU_APP_ID or not REDIRECT_URI:
+        raise HTTPException(500, "Feishu OAuth not configured")
+    auth_url = (
+        f"https://open.feishu.cn/open-apis/authen/v1/index"
+        f"?app_id={FEISHU_APP_ID}"
+        f"&redirect_uri={quote(REDIRECT_URI, safe='')}"
+        f"&state=login"
+    )
+    return RedirectResponse(auth_url)
+
+
+@app.get("/callback")
+async def callback(code: str):
+    """Handle Feishu OAuth callback."""
+    async with httpx.AsyncClient() as client:
+        # 1. Get app_access_token
+        resp = await client.post(
+            "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal",
+            json={"app_id": FEISHU_APP_ID, "app_secret": FEISHU_APP_SECRET},
+        )
+        token_data = resp.json()
+        if token_data.get("code") != 0:
+            raise HTTPException(500, f"Failed to get app token: {token_data}")
+        app_token = token_data.get("app_access_token")
+
+        # 2. Exchange code for user_access_token
+        resp = await client.post(
+            "https://open.feishu.cn/open-apis/authen/v1/access_token",
+            headers={"Authorization": f"Bearer {app_token}"},
+            json={"grant_type": "authorization_code", "code": code},
+        )
+        user_token_data = resp.json()
+        if user_token_data.get("code") != 0:
+            raise HTTPException(500, f"Failed to get user token: {user_token_data}")
+        data = user_token_data.get("data", {})
+        user_access_token = data.get("access_token")
+
+        # 3. Get user info
+        resp = await client.get(
+            "https://open.feishu.cn/open-apis/authen/v1/user_info",
+            headers={"Authorization": f"Bearer {user_access_token}"},
+        )
+        user_info_data = resp.json()
+        if user_info_data.get("code") != 0:
+            raise HTTPException(500, f"Failed to get user info: {user_info_data}")
+        user_info = user_info_data.get("data", {})
+
+    # 4. Set session and redirect to home
+    response = RedirectResponse("/")
+    set_session(
+        response,
+        {
+            "user_id": user_info.get("user_id"),
+            "name": user_info.get("name"),
+            "avatar": user_info.get("avatar_url"),
+        },
+    )
+    return response
+
+
+@app.get("/logout")
+def logout():
+    """Log out and clear session."""
+    response = RedirectResponse("/login")
+    response.delete_cookie("session")
+    return response
+
+
+# Exception handler for unauthorized access
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 401:
+        return RedirectResponse("/login")
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -390,7 +506,7 @@ HTML_PAGE = """
 
 
 @app.get("/", response_class=HTMLResponse)
-def root():
+def root(session: dict = Depends(require_auth)):
     return HTML_PAGE
 
 
@@ -412,7 +528,7 @@ def health():
 
 
 @app.post("/analyze")
-async def analyze_upload(file: UploadFile = File(...)):
+async def analyze_upload(file: UploadFile = File(...), session: dict = Depends(require_auth)):
     """Analyze uploaded video file."""
     if not file.filename:
         raise HTTPException(400, "No filename provided")
@@ -442,7 +558,7 @@ async def analyze_upload(file: UploadFile = File(...)):
 
 
 @app.get("/video/{video_id}")
-async def get_video(video_id: str):
+async def get_video(video_id: str, session: dict = Depends(require_auth)):
     """Serve uploaded video for playback."""
     if video_id not in VIDEO_CACHE:
         raise HTTPException(404, "Video not found")
@@ -450,7 +566,7 @@ async def get_video(video_id: str):
 
 
 @app.post("/analyze-url")
-async def analyze_url(url: str):
+async def analyze_url(url: str, session: dict = Depends(require_auth)):
     """Analyze video from URL."""
     try:
         async with httpx.AsyncClient(timeout=120) as client:
